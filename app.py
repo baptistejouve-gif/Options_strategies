@@ -1,7 +1,5 @@
-# --- IMPORTS ---
 import streamlit as st
 import numpy as np
-import pandas as pd
 import plotly.graph_objects as go
 from scipy.stats import norm
 
@@ -9,8 +7,8 @@ from scipy.stats import norm
 st.set_page_config(page_title="Options Strategy Builder", layout="wide")
 
 st.title("Options Strategy Builder")
-st.write("Construis et analyse des stratégies d'options : payoff, P&L, Greeks, stratégies prédéfinies.")
-
+st.write("Construis librement une stratégie d'options. "
+         "La prime est calculée automatiquement avec Black-Scholes.")
 
 # --- FONCTIONS BLACK-SCHOLES ---
 def d1(S, K, T, r, sigma):
@@ -45,97 +43,200 @@ def bs_greeks(S, K, T, r, sigma, option_type):
 
     if option_type == "Call":
         delta = norm.cdf(d_1)
-        theta = (-S * norm.pdf(d_1) * sigma / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d_2)) / 365
+        theta = ( -S * norm.pdf(d_1) * sigma / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d_2)) / 365
         rho = K * T * np.exp(-r * T) * norm.cdf(d_2) / 100
     else:
         delta = norm.cdf(d_1) - 1
-        theta = (-S * norm.pdf(d_1) * sigma / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d_2)) / 365
+        theta = (-S * norm.pdf(d_1) * sigma / (2 * np.sqrt(T))+ r * K * np.exp(-r * T) * norm.cdf(-d_2)) / 365
         rho = -K * T * np.exp(-r * T) * norm.cdf(-d_2) / 100
 
-    return {"Delta": delta, "Gamma": gamma, "Vega": vega, "Theta": theta, "Rho": rho}
+    return {"Delta": delta,"Gamma": gamma,"Vega": vega, "Theta": theta, "Rho": rho}
 
-# --- FONCTION PAYOFF ---
-def option_payoff(ST, K, premium, option_type, position, quantity):
+# --- FONCTIONS PAYOFF ET P&L ---
+def option_payoff(ST, K, option_type, position, quantity):
     if option_type == "Call":
         intrinsic = np.maximum(ST - K, 0)
     else:
         intrinsic = np.maximum(K - ST, 0)
 
-    if position == "Long":
-        pnl = intrinsic - premium
-    else:
-        pnl = premium - intrinsic
+    payoff = intrinsic if position == "Long" else -intrinsic
+    return quantity * payoff
 
-    return quantity * pnl
+def option_pnl(ST, K, premium, option_type, position, quantity):
+    payoff = option_payoff(ST, K, option_type, position, quantity)
+
+    if position == "Long":
+        premium_cashflow = -premium * quantity
+    else:
+        premium_cashflow = premium * quantity
+
+    return payoff + premium_cashflow
 
 def sign_position(position):
     return 1 if position == "Long" else -1
 
-# --- BIBLIOTHÈQUE DE STRATÉGIES ---
-def load_strategy_preset(strategy, spot):
-    K = spot
-    strategies = {
-        "Long Call": [["Call", "Long", K, 5.0, 1, 0.25, 0.20]],
-        "Short Call": [["Call", "Short", K, 5.0, 1, 0.25, 0.20]],
-        "Long Put": [["Put", "Long", K, 5.0, 1, 0.25, 0.20]],
-        "Short Put": [["Put", "Short", K, 5.0, 1, 0.25, 0.20]],
+# --- DÉTECTION AUTOMATIQUE DE STRATÉGIE ---
+def detect_strategy(options):
+    n = len(options)
 
-        "Bull Call Spread": [["Call", "Long", 0.95*K, 7.0, 1, 0.25, 0.20], ["Call", "Short", 1.05*K, 3.0, 1, 0.25, 0.20]],
-        "Bear Call Spread": [["Call", "Short", 0.95*K, 7.0, 1, 0.25, 0.20], ["Call", "Long", 1.05*K, 3.0, 1, 0.25, 0.20]],
-        "Bull Put Spread": [["Put", "Short", 1.05*K, 7.0, 1, 0.25, 0.20], ["Put", "Long", 0.95*K, 3.0, 1, 0.25, 0.20]],
-        "Bear Put Spread": [["Put", "Long", 1.05*K, 7.0, 1, 0.25, 0.20], ["Put", "Short", 0.95*K, 3.0, 1, 0.25, 0.20]],
+    if n == 1:
+        o = options[0]
+        return f"{o['Position']} {o['Type']}"
 
-        "Long Straddle": [["Call", "Long", K, 5.0, 1, 0.25, 0.20], ["Put", "Long", K, 5.0, 1, 0.25, 0.20]],
-        "Short Straddle": [["Call", "Short", K, 5.0, 1, 0.25, 0.20], ["Put", "Short", K, 5.0, 1, 0.25, 0.20]],
-        "Long Strangle": [["Put", "Long", 0.95*K, 3.0, 1, 0.25, 0.20], ["Call", "Long", 1.05*K, 3.0, 1, 0.25, 0.20]],
-        "Short Strangle": [["Put", "Short", 0.95*K, 3.0, 1, 0.25, 0.20], ["Call", "Short", 1.05*K, 3.0, 1, 0.25, 0.20]],
+    calls = [o for o in options if o["Type"] == "Call"]
+    puts = [o for o in options if o["Type"] == "Put"]
+    longs = [o for o in options if o["Position"] == "Long"]
+    shorts = [o for o in options if o["Position"] == "Short"]
 
-        "Long Call Butterfly": [["Call", "Long", 0.90*K, 12.0, 1, 0.25, 0.20], ["Call", "Short", K, 6.0, 2, 0.25, 0.20], ["Call", "Long", 1.10*K, 2.0, 1, 0.25, 0.20]],
-        "Short Call Butterfly": [["Call", "Short", 0.90*K, 12.0, 1, 0.25, 0.20], ["Call", "Long", K, 6.0, 2, 0.25, 0.20], ["Call", "Short", 1.10*K, 2.0, 1, 0.25, 0.20]],
-        "Long Put Butterfly": [["Put", "Long", 0.90*K, 2.0, 1, 0.25, 0.20], ["Put", "Short", K, 6.0, 2, 0.25, 0.20], ["Put", "Long", 1.10*K, 12.0, 1, 0.25, 0.20]],
-        "Short Put Butterfly": [["Put", "Short", 0.90*K, 2.0, 1, 0.25, 0.20], ["Put", "Long", K, 6.0, 2, 0.25, 0.20], ["Put", "Short", 1.10*K, 12.0, 1, 0.25, 0.20]],
+    strikes = sorted([o["Strike"] for o in options])
+    maturities = sorted([o["Maturité"] for o in options])
+    same_maturity = len(set(maturities)) == 1
+    same_strike = len(set(strikes)) == 1
 
-        "Iron Butterfly": [["Put", "Long", 0.90*K, 2.0, 1, 0.25, 0.20], ["Put", "Short", K, 5.0, 1, 0.25, 0.20], ["Call", "Short", K, 5.0, 1, 0.25, 0.20], ["Call", "Long", 1.10*K, 2.0, 1, 0.25, 0.20]],
-        "Reverse Iron Butterfly": [["Put", "Short", 0.90*K, 2.0, 1, 0.25, 0.20], ["Put", "Long", K, 5.0, 1, 0.25, 0.20], ["Call", "Long", K, 5.0, 1, 0.25, 0.20], ["Call", "Short", 1.10*K, 2.0, 1, 0.25, 0.20]],
+    if n == 2 and len(calls) == 1 and len(puts) == 1 and same_strike and same_maturity:
+        if len(longs) == 2:
+            return "Long Straddle"
+        if len(shorts) == 2:
+            return "Short Straddle"
 
-        "Long Call Condor": [["Call", "Long", 0.85*K, 15.0, 1, 0.25, 0.20], ["Call", "Short", 0.95*K, 9.0, 1, 0.25, 0.20], ["Call", "Short", 1.05*K, 4.0, 1, 0.25, 0.20], ["Call", "Long", 1.15*K, 1.0, 1, 0.25, 0.20]],
-        "Short Call Condor": [["Call", "Short", 0.85*K, 15.0, 1, 0.25, 0.20], ["Call", "Long", 0.95*K, 9.0, 1, 0.25, 0.20], ["Call", "Long", 1.05*K, 4.0, 1, 0.25, 0.20], ["Call", "Short", 1.15*K, 1.0, 1, 0.25, 0.20]],
-        "Iron Condor": [["Put", "Long", 0.85*K, 1.0, 1, 0.25, 0.20], ["Put", "Short", 0.95*K, 3.0, 1, 0.25, 0.20], ["Call", "Short", 1.05*K, 3.0, 1, 0.25, 0.20], ["Call", "Long", 1.15*K, 1.0, 1, 0.25, 0.20]],
-        "Reverse Iron Condor": [["Put", "Short", 0.85*K, 1.0, 1, 0.25, 0.20], ["Put", "Long", 0.95*K, 3.0, 1, 0.25, 0.20], ["Call", "Long", 1.05*K, 3.0, 1, 0.25, 0.20], ["Call", "Short", 1.15*K, 1.0, 1, 0.25, 0.20]],
+    if n == 2 and len(calls) == 1 and len(puts) == 1 and not same_strike and same_maturity:
+        call = calls[0]
+        put = puts[0]
 
-        "Long Call Calendar Spread": [["Call", "Short", K, 4.0, 1, 0.10, 0.20], ["Call", "Long", K, 7.0, 1, 0.50, 0.20]],
-        "Short Call Calendar Spread": [["Call", "Long", K, 4.0, 1, 0.10, 0.20], ["Call", "Short", K, 7.0, 1, 0.50, 0.20]],
-        "Long Put Calendar Spread": [["Put", "Short", K, 4.0, 1, 0.10, 0.20], ["Put", "Long", K, 7.0, 1, 0.50, 0.20]],
-        "Short Put Calendar Spread": [["Put", "Long", K, 4.0, 1, 0.10, 0.20], ["Put", "Short", K, 7.0, 1, 0.50, 0.20]],
-        "Double Calendar Spread": [["Put", "Short", 0.95*K, 3.0, 1, 0.10, 0.20], ["Put", "Long", 0.95*K, 5.5, 1, 0.50, 0.20], ["Call", "Short", 1.05*K, 3.0, 1, 0.10, 0.20], ["Call", "Long", 1.05*K, 5.5, 1, 0.50, 0.20]],
+        if put["Strike"] < call["Strike"]:
+            if len(longs) == 2:
+                return "Long Strangle"
+            if len(shorts) == 2:
+                return "Short Strangle"
 
-        "Bullish Call Diagonal": [["Call", "Long", 0.95*K, 8.0, 1, 0.50, 0.20], ["Call", "Short", 1.05*K, 3.0, 1, 0.10, 0.20]],
-        "Bearish Call Diagonal": [["Call", "Short", 0.95*K, 8.0, 1, 0.50, 0.20], ["Call", "Long", 1.05*K, 3.0, 1, 0.10, 0.20]],
-        "Bullish Put Diagonal": [["Put", "Short", 1.05*K, 8.0, 1, 0.50, 0.20], ["Put", "Long", 0.95*K, 3.0, 1, 0.10, 0.20]],
-        "Bearish Put Diagonal": [["Put", "Long", 1.05*K, 8.0, 1, 0.50, 0.20], ["Put", "Short", 0.95*K, 3.0, 1, 0.10, 0.20]],
+        if call["Strike"] < put["Strike"]:
+            if len(longs) == 2:
+                return "Long Guts"
+            if len(shorts) == 2:
+                return "Short Guts"
 
-        "Call Ratio Spread 1x2": [["Call", "Long", 0.95*K, 7.0, 1, 0.25, 0.20], ["Call", "Short", 1.05*K, 3.0, 2, 0.25, 0.20]],
-        "Put Ratio Spread 1x2": [["Put", "Long", 1.05*K, 7.0, 1, 0.25, 0.20], ["Put", "Short", 0.95*K, 3.0, 2, 0.25, 0.20]],
-        "Call Backspread 1x2": [["Call", "Short", 0.95*K, 7.0, 1, 0.25, 0.20], ["Call", "Long", 1.05*K, 3.0, 2, 0.25, 0.20]],
-        "Put Backspread 1x2": [["Put", "Short", 1.05*K, 7.0, 1, 0.25, 0.20], ["Put", "Long", 0.95*K, 3.0, 2, 0.25, 0.20]],
+    if n == 2 and len(calls) == 1 and len(puts) == 1:
+        call = calls[0]
+        put = puts[0]
 
-        "Synthetic Long Forward": [["Call", "Long", K, 5.0, 1, 0.25, 0.20], ["Put", "Short", K, 5.0, 1, 0.25, 0.20]],
-        "Synthetic Short Forward": [["Call", "Short", K, 5.0, 1, 0.25, 0.20], ["Put", "Long", K, 5.0, 1, 0.25, 0.20]],
+        if call["Strike"] == put["Strike"] and call["Position"] == "Long" and put["Position"] == "Short":
+            return "Synthetic Long Forward"
 
-        "Protective Put": [["Put", "Long", 0.95*K, 3.0, 1, 0.25, 0.20]],
-        "Covered Call": [["Call", "Short", 1.05*K, 3.0, 1, 0.25, 0.20]],
-        "Collar": [["Put", "Long", 0.95*K, 3.0, 1, 0.25, 0.20], ["Call", "Short", 1.05*K, 3.0, 1, 0.25, 0.20]],
-        "Zero Cost Collar": [["Put", "Long", 0.95*K, 3.0, 1, 0.25, 0.20], ["Call", "Short", 1.08*K, 3.0, 1, 0.25, 0.20]],
+        if call["Strike"] == put["Strike"] and call["Position"] == "Short" and put["Position"] == "Long":
+            return "Synthetic Short Forward"
 
-        "Long Guts": [["Call", "Long", 0.95*K, 7.0, 1, 0.25, 0.20], ["Put", "Long", 1.05*K, 7.0, 1, 0.25, 0.20]],
-        "Short Guts": [["Call", "Short", 0.95*K, 7.0, 1, 0.25, 0.20], ["Put", "Short", 1.05*K, 7.0, 1, 0.25, 0.20]],
+        if call["Position"] == "Long" and put["Position"] == "Short":
+            return "Bullish Risk Reversal"
 
-        "Bull Call Ladder": [["Call", "Long", 0.95*K, 8.0, 1, 0.25, 0.20], ["Call", "Short", 1.05*K, 4.0, 1, 0.25, 0.20], ["Call", "Short", 1.15*K, 2.0, 1, 0.25, 0.20]],
-        "Bear Put Ladder": [["Put", "Long", 1.05*K, 8.0, 1, 0.25, 0.20], ["Put", "Short", 0.95*K, 4.0, 1, 0.25, 0.20], ["Put", "Short", 0.85*K, 2.0, 1, 0.25, 0.20]],
-    }
-    return strategies.get(strategy, [])
+        if call["Position"] == "Short" and put["Position"] == "Long":
+            return "Bearish Risk Reversal"
 
-strategy_list = ["Custom", "Long Call", "Short Call", "Long Put", "Short Put", "Bull Call Spread", "Bear Call Spread", "Bull Put Spread", "Bear Put Spread", "Long Straddle", "Short Straddle", "Long Strangle", "Short Strangle", "Long Call Butterfly", "Short Call Butterfly", "Long Put Butterfly", "Short Put Butterfly", "Iron Butterfly", "Reverse Iron Butterfly", "Long Call Condor", "Short Call Condor", "Iron Condor", "Reverse Iron Condor", "Long Call Calendar Spread", "Short Call Calendar Spread", "Long Put Calendar Spread", "Short Put Calendar Spread", "Double Calendar Spread", "Bullish Call Diagonal", "Bearish Call Diagonal", "Bullish Put Diagonal", "Bearish Put Diagonal", "Call Ratio Spread 1x2", "Put Ratio Spread 1x2", "Call Backspread 1x2", "Put Backspread 1x2", "Synthetic Long Forward", "Synthetic Short Forward", "Protective Put", "Covered Call", "Collar", "Zero Cost Collar", "Long Guts", "Short Guts", "Bull Call Ladder", "Bear Put Ladder"]
+    if n == 2 and len(calls) == 2 and same_maturity:
+        call_long = [o for o in calls if o["Position"] == "Long"]
+        call_short = [o for o in calls if o["Position"] == "Short"]
+
+        if len(call_long) == 1 and len(call_short) == 1:
+            K_long = call_long[0]["Strike"]
+            K_short = call_short[0]["Strike"]
+
+            if K_long < K_short:
+                return "Bull Call Spread"
+            if K_long > K_short:
+                return "Bear Call Spread"
+
+    if n == 2 and len(puts) == 2 and same_maturity:
+        put_long = [o for o in puts if o["Position"] == "Long"]
+        put_short = [o for o in puts if o["Position"] == "Short"]
+
+        if len(put_long) == 1 and len(put_short) == 1:
+            K_long = put_long[0]["Strike"]
+            K_short = put_short[0]["Strike"]
+
+            if K_long > K_short:
+                return "Bear Put Spread"
+            if K_long < K_short:
+                return "Bull Put Spread"
+
+    if n == 2 and len(set(strikes)) == 1 and len(set(maturities)) == 2:
+        if len(calls) == 2:
+            long_leg = [o for o in calls if o["Position"] == "Long"][0]
+            short_leg = [o for o in calls if o["Position"] == "Short"][0]
+
+            if long_leg["Maturité"] > short_leg["Maturité"]:
+                return "Long Call Calendar Spread"
+            else:
+                return "Short Call Calendar Spread"
+
+        if len(puts) == 2:
+            long_leg = [o for o in puts if o["Position"] == "Long"][0]
+            short_leg = [o for o in puts if o["Position"] == "Short"][0]
+
+            if long_leg["Maturité"] > short_leg["Maturité"]:
+                return "Long Put Calendar Spread"
+            else:
+                return "Short Put Calendar Spread"
+
+    if n == 2 and len(set(strikes)) == 2 and len(set(maturities)) == 2:
+        if len(calls) == 2:
+            return "Call Diagonal Spread"
+        if len(puts) == 2:
+            return "Put Diagonal Spread"
+
+    if n == 3 and same_maturity:
+        if len(calls) == 3:
+            qty = sorted([o["Quantité"] for o in calls])
+            if qty == [1, 1, 2] and len(set(strikes)) == 3:
+                middle_strike = strikes[1]
+                middle_leg = [o for o in calls if o["Strike"] == middle_strike][0]
+
+                if middle_leg["Position"] == "Short":
+                    return "Long Call Butterfly"
+                if middle_leg["Position"] == "Long":
+                    return "Short Call Butterfly"
+
+        if len(puts) == 3:
+            qty = sorted([o["Quantité"] for o in puts])
+            if qty == [1, 1, 2] and len(set(strikes)) == 3:
+                middle_strike = strikes[1]
+                middle_leg = [o for o in puts if o["Strike"] == middle_strike][0]
+
+                if middle_leg["Position"] == "Short":
+                    return "Long Put Butterfly"
+                if middle_leg["Position"] == "Long":
+                    return "Short Put Butterfly"
+
+    if n == 4 and len(calls) == 2 and len(puts) == 2 and same_maturity:
+        short_call = [o for o in calls if o["Position"] == "Short"]
+        short_put = [o for o in puts if o["Position"] == "Short"]
+        long_call = [o for o in calls if o["Position"] == "Long"]
+        long_put = [o for o in puts if o["Position"] == "Long"]
+
+        if len(short_call) == 1 and len(short_put) == 1 and len(long_call) == 1 and len(long_put) == 1:
+            if short_call[0]["Strike"] == short_put[0]["Strike"]:
+                return "Iron Butterfly"
+
+            if long_call[0]["Strike"] == long_put[0]["Strike"]:
+                return "Reverse Iron Butterfly"
+
+    if n == 4 and len(calls) == 2 and len(puts) == 2 and same_maturity:
+        call_long = [o for o in calls if o["Position"] == "Long"]
+        call_short = [o for o in calls if o["Position"] == "Short"]
+        put_long = [o for o in puts if o["Position"] == "Long"]
+        put_short = [o for o in puts if o["Position"] == "Short"]
+
+        if len(call_long) == 1 and len(call_short) == 1 and len(put_long) == 1 and len(put_short) == 1:
+            K_put_long = put_long[0]["Strike"]
+            K_put_short = put_short[0]["Strike"]
+            K_call_short = call_short[0]["Strike"]
+            K_call_long = call_long[0]["Strike"]
+
+            if K_put_long < K_put_short < K_call_short < K_call_long:
+                return "Iron Condor"
+
+            if K_put_short < K_put_long < K_call_long < K_call_short:
+                return "Reverse Iron Condor"
+
+    return "Stratégie personnalisée / non reconnue"
 
 # --- INTERPRÉTATION DES GREEKS ---
 def greek_exposure_comment(name, value):
@@ -147,61 +248,69 @@ def greek_exposure_comment(name, value):
 st.sidebar.header("Paramètres globaux")
 
 spot = st.sidebar.number_input("Spot actuel", min_value=1.0, value=100.0, step=1.0)
-risk_free_rate = st.sidebar.number_input("Taux sans risque r", min_value=-0.10, max_value=0.30, value=0.03, step=0.005, format="%.3f")
+
+risk_free_rate = st.sidebar.number_input("Taux sans risque r", min_value=-0.10, max_value=0.30, value=0.03,step=0.005, format="%.3f")
 
 price_min = st.sidebar.number_input("Prix min affiché", min_value=0.0, value=50.0, step=5.0)
 price_max = st.sidebar.number_input("Prix max affiché", min_value=1.0, value=150.0, step=5.0)
 
-selected_ST = st.sidebar.slider("Prix du sous-jacent à maturité", min_value=float(price_min), max_value=float(price_max), value=float(spot), step=1.0)
-preset = st.sidebar.selectbox("Stratégie prédéfinie", strategy_list)
+selected_ST = st.sidebar.slider( "Prix du sous-jacent à maturité", min_value=float(price_min), max_value=float(price_max), value=float(spot),step=1.0)
 
-if preset == "Custom":
-    preset_data = []
-    number_options = st.sidebar.number_input("Nombre d'options", min_value=1, max_value=12, value=2, step=1)
-else:
-    preset_data = load_strategy_preset(preset, spot)
-    number_options = len(preset_data)
+number_options = st.sidebar.number_input("Nombre d'options",min_value=1,max_value=12,value=2,step=1)
 
-# --- CONSTRUCTION DES JAMBES ---
+# --- CONSTRUCTION DES OPTIONS ---
 st.markdown("### Construction de la stratégie")
 
 options = []
 
 for i in range(int(number_options)):
-    st.markdown(f"#### Jambe {i + 1}")
+    st.markdown(f"#### Option {i + 1}")
 
-    default = preset_data[i] if preset_data else ["Call", "Long", spot, 5.0, 1, 0.25, 0.20]
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     with col1:
-        option_type = st.selectbox("Type", ["Call", "Put"], index=["Call", "Put"].index(default[0]), key=f"type_{i}")
-    with col2:
-        position = st.selectbox("Position", ["Long", "Short"], index=["Long", "Short"].index(default[1]), key=f"position_{i}")
-    with col3:
-        strike = st.number_input("Strike", min_value=1.0, value=float(default[2]), step=1.0, key=f"strike_{i}")
-    with col4:
-        premium = st.number_input("Prime", min_value=0.0, value=float(default[3]), step=0.5, key=f"premium_{i}")
-    with col5:
-        quantity = st.number_input("Quantité", min_value=1, value=int(default[4]), step=1, key=f"quantity_{i}")
-    with col6:
-        maturity = st.number_input("Maturité T", min_value=0.001, value=float(default[5]), step=0.05, key=f"maturity_{i}")
-    with col7:
-        implied_vol = st.number_input("Vol implicite", min_value=0.001, value=float(default[6]), step=0.01, key=f"vol_{i}")
+        option_type = st.selectbox("Type", ["Call", "Put"], key=f"type_{i}")
 
-    theo_price = bs_price(spot, strike, maturity, risk_free_rate, implied_vol, option_type)
-    greeks = bs_greeks(spot, strike, maturity, risk_free_rate, implied_vol, option_type)
+    with col2:
+        position = st.selectbox("Position", ["Long", "Short"], key=f"position_{i}")
+
+    with col3:
+        strike = st.number_input("Strike", min_value=1.0, value=100.0, step=1.0, key=f"strike_{i}")
+
+    with col4:
+        quantity = st.number_input("Quantité", min_value=1, value=1, step=1, key=f"quantity_{i}")
+
+    with col5:
+        maturity = st.number_input("Maturité T", min_value=0.001, value=0.25, step=0.05, key=f"maturity_{i}")
+
+    with col6:
+        implied_vol = st.number_input("Vol implicite", min_value=0.001, value=0.20, step=0.01, key=f"vol_{i}")
+
+    premium = bs_price(spot,strike,maturity,risk_free_rate,implied_vol,option_type)
+
+    st.caption(f"Prime théorique Black-Scholes : {premium:.4f}")
+
+    greeks = bs_greeks(spot,strike,maturity,risk_free_rate, implied_vol,option_type)
+
     multiplier = sign_position(position) * quantity
 
-    options.append({"Type": option_type, "Position": position, "Strike": strike, "Prime": premium, "Quantité": quantity, "Maturité": maturity, "Vol": implied_vol, "Prix BS": theo_price, "Delta": greeks["Delta"] * multiplier, "Gamma": greeks["Gamma"] * multiplier, "Vega": greeks["Vega"] * multiplier, "Theta": greeks["Theta"] * multiplier, "Rho": greeks["Rho"] * multiplier})
+    options.append({"Type": option_type,"Position": position,"Strike": strike,"Prime": premium,"Quantité": quantity,"Maturité": maturity,"Vol": implied_vol,"Prix BS": premium,"Delta": greeks["Delta"] * multiplier,"Gamma": greeks["Gamma"] * multiplier,"Vega": greeks["Vega"] * multiplier,"Theta": greeks["Theta"] * multiplier,"Rho": greeks["Rho"] * multiplier})
 
-# --- CALCUL DU PAYOFF ET DES GREEKS ---
+# --- CALCUL PAYOFF, P&L ET GREEKS ---
 ST_range = np.linspace(price_min, price_max, 700)
+
+total_payoff = np.zeros_like(ST_range)
 total_pnl = np.zeros_like(ST_range)
 
 for opt in options:
-    total_pnl += option_payoff(ST_range, opt["Strike"], opt["Prime"], opt["Type"], opt["Position"], opt["Quantité"])
+    total_payoff += option_payoff(ST_range,opt["Strike"],opt["Type"],opt["Position"],opt["Quantité"])
 
+    total_pnl += option_pnl(ST_range,opt["Strike"],opt["Prime"],opt["Type"],opt["Position"],opt["Quantité"])
+
+selected_payoff = np.interp(selected_ST, ST_range, total_payoff)
 selected_pnl = np.interp(selected_ST, ST_range, total_pnl)
+
+strategy_detected = detect_strategy(options)
 
 total_delta = sum(o["Delta"] for o in options)
 total_gamma = sum(o["Gamma"] for o in options)
@@ -209,7 +318,7 @@ total_vega = sum(o["Vega"] for o in options)
 total_theta = sum(o["Theta"] for o in options)
 total_rho = sum(o["Rho"] for o in options)
 
-net_premium = sum(o["Prime"] * o["Quantité"] * (1 if o["Position"] == "Long" else -1) for o in options)
+net_premium = sum(o["Prime"] * o["Quantité"] * (-1 if o["Position"] == "Long" else 1)for o in options)
 
 breakeven_indices = np.where(np.diff(np.sign(total_pnl)) != 0)[0]
 breakevens = []
@@ -217,33 +326,54 @@ breakevens = []
 for idx in breakeven_indices:
     x1, x2 = ST_range[idx], ST_range[idx + 1]
     y1, y2 = total_pnl[idx], total_pnl[idx + 1]
-    if y2 != y1:
-        breakevens.append(x1 - y1 * (x2 - x1) / (y2 - y1))
 
-# --- AFFICHAGE DES RÉSULTATS ---
+    if y2 != y1:
+        breakeven = x1 - y1 * (x2 - x1) / (y2 - y1)
+        breakevens.append(breakeven)
+
+# --- AFFICHAGE RÉSUMÉ ---
 st.markdown("### Résumé de la stratégie")
 
 col1, col2, col3, col4 = st.columns(4)
 
-col1.metric("Stratégie", preset)
+col1.metric("Stratégie détectée", strategy_detected)
 col2.metric("P&L au prix choisi", f"{selected_pnl:.2f}")
-col3.metric("Prime nette", f"{net_premium:.2f}")
+col3.metric("Cash-flow prime", f"{net_premium:.2f}")
 col4.metric("Prix final choisi", f"{selected_ST:.2f}")
 
 col5, col6, col7 = st.columns(3)
 
 col5.metric("Gain max zone affichée", f"{np.max(total_pnl):.2f}")
 col6.metric("Perte max zone affichée", f"{np.min(total_pnl):.2f}")
-col7.metric("Breakeven(s)", ", ".join([f"{x:.2f}" for x in breakevens]) if breakevens else "Aucun")
 
-# --- GRAPHIQUE INTERACTIF DU PAYOFF ---
+col7.metric("Breakeven(s)",", ".join([f"{x:.2f}" for x in breakevens]) if breakevens else "Aucun")
+
+# --- GRAPHIQUE INTERACTIF PAYOFF / P&L ---
 st.markdown("### Payoff / P&L à maturité")
 
+display_mode = st.radio("Affichage",["P&L net", "Payoff brut", "Les deux"],horizontal=True)
+
 fig_payoff = go.Figure()
-fig_payoff.add_trace(go.Scatter(x=ST_range, y=total_pnl, mode="lines", name="P&L total"))
-fig_payoff.add_hline(y=0, line_dash="dash", annotation_text="P&L = 0")
-fig_payoff.add_vline(x=selected_ST, line_dash="dot", annotation_text=f"S_T = {selected_ST:.2f}")
-fig_payoff.update_layout(title="P&L de la stratégie à maturité", xaxis_title="Prix du sous-jacent à maturité", yaxis_title="Profit / Perte", hovermode="x unified", height=600)
+
+if display_mode in ["P&L net", "Les deux"]:
+    pnl_positive = np.where(total_pnl >= 0, total_pnl, np.nan)
+    pnl_negative = np.where(total_pnl < 0, total_pnl, np.nan)
+
+    fig_payoff.add_trace(go.Scatter(x=ST_range,y=pnl_positive,mode="lines",name="P&L positif",line=dict(color="green")))
+
+    fig_payoff.add_trace(go.Scatter(x=ST_range,y=pnl_negative,mode="lines",name="P&L négatif",line=dict(color="red")))
+
+if display_mode in ["Payoff brut", "Les deux"]:
+    fig_payoff.add_trace(go.Scatter(x=ST_range,y=total_payoff,mode="lines",name="Payoff brut",line=dict(color="blue", dash="dash")))
+
+fig_payoff.add_hline(y=0,line_dash="dash",annotation_text="P&L = 0")
+
+for be in breakevens:
+    fig_payoff.add_vline(x=be,line_dash="dash",annotation_text=f"BE = {be:.2f}")
+
+fig_payoff.add_vline(x=selected_ST,line_dash="dot",annotation_text=f"S_T = {selected_ST:.2f}")
+
+fig_payoff.update_layout(title="Payoff brut vs P&L net de la stratégie",xaxis_title="Prix du sous-jacent à maturité",yaxis_title="Gain / Perte",hovermode="x unified",height=600)
 
 st.plotly_chart(fig_payoff, use_container_width=True)
 
@@ -276,11 +406,3 @@ elif total_delta < 0:
     st.info("Profil directionnel baissier.")
 else:
     st.info("Profil globalement delta-neutre autour du spot actuel.")
-
-# --- TABLEAU DÉTAILLÉ DES JAMBES ---
-with st.expander("Voir le détail des jambes"):
-    df_options = pd.DataFrame(options)
-    st.dataframe(df_options.style.format({"Strike": "{:.2f}", "Prime": "{:.2f}", "Maturité": "{:.2f}", "Vol": "{:.2%}", "Prix BS": "{:.2f}", "Delta": "{:.4f}", "Gamma": "{:.4f}", "Vega": "{:.4f}", "Theta": "{:.4f}", "Rho": "{:.4f}"}), use_container_width=True)
-
-# --- NOTE MÉTHODOLOGIQUE ---
-st.warning("Attention : pour les calendar et diagonal spreads, le payoff affiché est une approximation simplifiée. La vraie valeur doit être calculée en mark-to-market avant maturité avec Black-Scholes.")
