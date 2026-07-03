@@ -1,43 +1,43 @@
-# 📈 Options Strategy Builder
+## 📈 Options Strategy Builder
 
-Une application **Streamlit** permettant de construire, analyser et visualiser des stratégies d'options.
+A **Streamlit** application for building, analyzing, and visualizing options strategies.
 
-L'application permet de créer des stratégies personnalisées puis d'obtenir :
+The application allows users to create custom option strategies and provides:
 
-- le payoff à maturité
-- le P&L
-- les Greeks (Delta, Gamma, Vega, Theta, Rho)
-- les prix théoriques Black-Scholes
-- les points morts (Break-even)
-- l'exposition globale de la stratégie
-- le nom de la stratégie si répértorier 
+- Payoff at expiration
+- Profit & Loss (P&L)
+- Greeks (Delta, Gamma, Vega, Theta, Rho)
+- Theoretical Black-Scholes prices
+- Break-even points
+- Overall strategy exposure
+- Strategy name if it matches a predefined strategy
 
 ---
 
-# Fonctionnalités
+# Features
 
-## Construction de stratégies
+## Strategy Construction
 
-Création de stratégies personnalisées composées de plusieurs options :
+Create custom strategies composed of multiple option legs:
 
 - Calls
 - Puts
-- Positions Long / Short
-- Quantité personnalisée
+- Long / Short positions
+- Custom quantity
 - Strike
-- Prime
-- Maturité
-- Volatilité implicite
+- Premium
+- Time to maturity
+- Implied volatility
 
-Jusqu'à 12 options peuvent être ajoutées.
+Up to **12 option legs** can be added.
 
 ---
 
-# Modèle de valorisation
+# Pricing Model
 
-Les prix théoriques sont calculés avec le modèle de **Black-Scholes**.
+Theoretical option prices are calculated using the **Black-Scholes** model.
 
-Les Greeks calculés sont :
+The calculated Greeks include:
 
 - Delta
 - Gamma
@@ -47,8 +47,17 @@ Les Greeks calculés sont :
 
 ---
 
-## Lancement 
+# Launch
 
-- Ouvrir le shell et allez dans le dossier ou vous avez enregistrés app.py
-- pip install -r requirements.txt
-- streamlit run app.py
+- Open a terminal and navigate to the folder where **app.py** is located.
+- Run:
+
+```bash
+pip install -r requirements.txt
+```
+
+- Then start the application with:
+
+```bash
+streamlit run app.py
+```
